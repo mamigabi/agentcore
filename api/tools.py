@@ -11,43 +11,113 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
 
+
 @tool
 def web_search(query: str) -> str:
     """Useful for searching the internet for current information."""
     try:
         tavily = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
         search_result = tavily.search(query=query, search_depth="basic")
-        
         formatted_results = []
         for result in search_result.get("results", []):
-            formatted_results.append(f"Title: {result.get('title')}\nURL: {result.get('url')}\nContent: {result.get('content')}\n---")
-        
+            formatted_results.append(
+                f"Title: {result.get('title')}\nURL: {result.get('url')}\nContent: {result.get('content')}\n---"
+            )
         return "\n".join(formatted_results) if formatted_results else "No relevant results found."
     except Exception as e:
         return f"Error using Tavily search: {str(e)}"
 
+
 @tool
 def extract_url_content(url: str) -> str:
-    """Useful for reading and extracting the text content of a specific URL."""
+    """Useful for reading and extracting the text content of a specific URL (static pages)."""
     try:
         response = requests.get(url, timeout=10, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         })
         response.raise_for_status()
-        
         soup = BeautifulSoup(response.text, 'html.parser')
-        
         for script_or_style in soup(["script", "style"]):
             script_or_style.decompose()
-            
         text = soup.get_text()
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         text = '\n'.join(chunk for chunk in chunks if chunk)
-        
         return text[:4000] if text else "No content found at the URL."
     except Exception as e:
         return f"Error extracting content from URL {url}: {str(e)}"
+
+
+@tool
+def browser_scrape(url: str) -> str:
+    """Useful for scraping dynamic web pages that require JavaScript execution (SPAs, React, Next.js, social media). Uses Playwright headless browser. Use this when extract_url_content returns empty or incomplete content."""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                    "--no-zygote"
+                ]
+            )
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 720}
+            )
+            page = context.new_page()
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(2000)
+            content = page.inner_text("body")
+            browser.close()
+            lines = [line.strip() for line in content.splitlines() if line.strip()]
+            text = "\n".join(lines)
+            return text[:5000] if text else "No content found at the URL."
+    except ImportError:
+        return "Playwright not available, falling back to static scrape: " + extract_url_content(url)
+    except Exception as e:
+        return f"Error using Playwright on {url}: {str(e)}"
+
+
+@tool
+def browser_click_and_scrape(url: str, selector: str) -> str:
+    """Useful for interacting with a web page: navigate to URL, click on an element by CSS selector, and return the resulting page content. Use for pages requiring button clicks or tab navigation."""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--single-process",
+                    "--no-zygote"
+                ]
+            )
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(1000)
+            page.click(selector, timeout=5000)
+            page.wait_for_timeout(2000)
+            content = page.inner_text("body")
+            browser.close()
+            lines = [line.strip() for line in content.splitlines() if line.strip()]
+            text = "\n".join(lines)
+            return text[:5000] if text else "No content after click."
+    except ImportError:
+        return "Playwright not available."
+    except Exception as e:
+        return f"Error using Playwright click on {url} with selector '{selector}': {str(e)}"
+
 
 @tool
 def send_email(to_email: str, subject: str, content: str) -> str:
@@ -56,18 +126,17 @@ def send_email(to_email: str, subject: str, content: str) -> str:
         api_key = os.environ.get("SENDGRID_API_KEY")
         if not api_key:
             return "Error: SENDGRID_API_KEY is not configured."
-            
         message = Mail(
             from_email='agentcore@tu-dominio.com',
             to_emails=to_email,
             subject=subject,
             html_content=content)
-            
         sg = SendGridAPIClient(api_key)
         response = sg.send(message)
         return f"Email sent successfully to {to_email}. Status code: {response.status_code}"
     except Exception as e:
         return f"Error sending email: {str(e)}"
+
 
 @tool
 def analyze_image(image_url: str, prompt: str) -> str:
@@ -77,7 +146,6 @@ def analyze_image(image_url: str, prompt: str) -> str:
             model="gemini-2.0-flash",
             google_api_key=os.environ.get("GEMINI_API_KEY")
         )
-        
         message = HumanMessage(
             content=[
                 {"type": "text", "text": prompt},
@@ -89,4 +157,12 @@ def analyze_image(image_url: str, prompt: str) -> str:
     except Exception as e:
         return f"Error analyzing image: {str(e)}"
 
-agent_tools = [web_search, extract_url_content, send_email, analyze_image]
+
+agent_tools = [
+    web_search,
+    extract_url_content,
+    browser_scrape,
+    browser_click_and_scrape,
+    send_email,
+    analyze_image
+]
