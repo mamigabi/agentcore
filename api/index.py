@@ -8,7 +8,7 @@ import os
 
 load_dotenv()
 
-app = FastAPI(title="AgentCore - AI Agent API v2" + Playwright)
+app = FastAPI(title="AgentCore - AI Agent API v2 + Playwright")
 agent = AgentCore()
 db = SupabaseHistory()
 
