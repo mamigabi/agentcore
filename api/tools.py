@@ -4,6 +4,10 @@ from bs4 import BeautifulSoup
 from tavily import TavilyClient
 from langchain.tools import tool
 from dotenv import load_dotenv
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+from langchain_core.messages import HumanMessage
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 load_dotenv()
 
@@ -33,24 +37,56 @@ def extract_url_content(url: str) -> str:
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Remove script and style elements
         for script_or_style in soup(["script", "style"]):
             script_or_style.decompose()
             
-        # Get text
         text = soup.get_text()
-        
-        # Break into lines and remove leading/trailing whitespace
         lines = (line.strip() for line in text.splitlines())
-        # Break multi-headlines into a line each
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        # Drop blank lines
         text = '\n'.join(chunk for chunk in chunks if chunk)
         
-        # Limit content to avoid token limits
         return text[:4000] if text else "No content found at the URL."
     except Exception as e:
         return f"Error extracting content from URL {url}: {str(e)}"
 
-# Export tools as a list
-agent_tools = [web_search, extract_url_content]
+@tool
+def send_email(to_email: str, subject: str, content: str) -> str:
+    """Useful for sending emails. Provide the destination email, subject, and text content."""
+    try:
+        api_key = os.environ.get("SENDGRID_API_KEY")
+        if not api_key:
+            return "Error: SENDGRID_API_KEY is not configured."
+            
+        message = Mail(
+            from_email='agentcore@tu-dominio.com',
+            to_emails=to_email,
+            subject=subject,
+            html_content=content)
+            
+        sg = SendGridAPIClient(api_key)
+        response = sg.send(message)
+        return f"Email sent successfully to {to_email}. Status code: {response.status_code}"
+    except Exception as e:
+        return f"Error sending email: {str(e)}"
+
+@tool
+def analyze_image(image_url: str, prompt: str) -> str:
+    """Useful for analyzing an image from a URL. Provide the image URL and a prompt asking what you want to know about it."""
+    try:
+        llm_vision = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash",
+            google_api_key=os.environ.get("GEMINI_API_KEY")
+        )
+        
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": image_url}
+            ]
+        )
+        response = llm_vision.invoke([message])
+        return response.content
+    except Exception as e:
+        return f"Error analyzing image: {str(e)}"
+
+agent_tools = [web_search, extract_url_content, send_email, analyze_image]
