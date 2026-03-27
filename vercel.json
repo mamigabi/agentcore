@@ -4,6 +4,35 @@
     {
       "src": "package.json",
       "use": "@vercel/next"
+    },
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "api/index.py"
+    }
+  ],
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/morning",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/evening",
+      "schedule": "0 20 * * *"
     }
   ]
 }
